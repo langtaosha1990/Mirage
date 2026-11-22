@@ -2,6 +2,15 @@ name: iOS TestFlight
 
 on:
   workflow_dispatch:
+    inputs:
+      distribution:
+        description: Distribution method
+        type: choice
+        required: true
+        default: ad-hoc
+        options:
+          - ad-hoc
+          - app-store-connect
 
 permissions:
   contents: read
@@ -11,18 +20,103 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.4.1.app/Contents/Developer
           xcodebuild -version
 
-      - name: Build Release without signing
+      - name: Install signing materials
+        id: signing
+        env:
+          CERTIFICATE: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ inputs.distribution == 'ad-hoc' && secrets.IOS_AD_HOC_PROFILE_BASE64 || inputs.distribution == 'app-store-connect' && secrets.IOS_APP_STORE_PROFILE_BASE64 || '' }}
         run: |
-          xcodebuild \
-            -project Mirage.xcodeproj \
-            -scheme Mirage \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          set -euo pipefail
+          : "${CERTIFICATE:?Missing certificate secret}"
+          : "${CERTIFICATE_PASSWORD:?Missing certificate password secret}"
+          : "${PROFILE:?Missing provisioning profile secret}"
+          umask 077
+          keychain="$RUNNER_TEMP/mirage.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/mirage.p12"
+          printf '%s' "$PROFILE" | base64 -D > "$RUNNER_TEMP/mirage.mobileprovision"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security import "$RUNNER_TEMP/mirage.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/mirage.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+
+          security cms -D -i "$RUNNER_TEMP/mirage.mobileprovision" > "$RUNNER_TEMP/mirage-profile.plist"
+          uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/mirage-profile.plist")"
+          profile_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          cp "$RUNNER_TEMP/mirage.mobileprovision" "$profile_dir/$uuid.mobileprovision"
+          echo "profile_uuid=$uuid" >> "$GITHUB_OUTPUT"
+
+      - name: Archive and export Release IPA
+        env:
+          DISTRIBUTION: ${{ inputs.distribution }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+        run: |
+          set -euo pipefail
+          method="$DISTRIBUTION"
+          if [[ "$method" == ad-hoc ]]; then
+            method=release-testing
+          fi
+          build_number=$((10000 + GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          xcodebuild -project Mirage.xcodeproj -scheme Mirage -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Mirage.xcarchive" \
+            CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=SX7EYW9LC7 \
+            CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            CURRENT_PROJECT_VERSION="$build_number" archive
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>$method</string>
+            <key>teamID</key><string>SX7EYW9LC7</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>provisioningProfiles</key>
+            <dict><key>com.gpf.Mirage</key><string>$PROFILE_UUID</string></dict>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Mirage.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export"
+
+      - name: Save Ad Hoc IPA
+        if: inputs.distribution == 'ad-hoc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mirage-Ad-Hoc
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+
+      - name: Upload to App Store Connect
+        if: inputs.distribution == 'app-store-connect'
+        env:
+          API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${API_KEY_ID:?Missing App Store Connect key ID}"
+          : "${API_ISSUER_ID:?Missing App Store Connect issuer ID}"
+          : "${API_PRIVATE_KEY:?Missing App Store Connect private key}"
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key_path="$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$API_PRIVATE_KEY" > "$key_path"
+          ipa_files=("$RUNNER_TEMP"/export/*.ipa)
+          xcrun altool --upload-app --type ios --file "${ipa_files[0]}" \
+            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER_ID"
