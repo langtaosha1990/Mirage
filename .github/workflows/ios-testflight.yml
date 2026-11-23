@@ -78,7 +78,7 @@ jobs:
           if [[ "$method" == ad-hoc ]]; then
             method=release-testing
           fi
-          build_number=$((10000 + GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          build_number="$(date '+%Y %-m %-d %-H %-M %-S' | tr -d ' ')"
           xcodebuild -project Mirage.xcodeproj -scheme Mirage -configuration "$BUILD_CONFIGURATION" \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Mirage.xcarchive" \
             CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=SX7EYW9LC7 \
