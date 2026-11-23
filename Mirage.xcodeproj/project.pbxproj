@@ -148,6 +148,7 @@
 				DEVELOPMENT_TEAM = SX7EYW9LC7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mirage/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mirage 使用相机呈现并拍摄实时 AR 特效。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mirage 需要使用麦克风为特效视频录制声音。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Mirage 需要将你拍摄的特效作品保存到系统照片。";
@@ -183,6 +184,7 @@
 				DEVELOPMENT_TEAM = SX7EYW9LC7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Mirage/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mirage 使用相机呈现并拍摄实时 AR 特效。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mirage 需要使用麦克风为特效视频录制声音。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Mirage 需要将你拍摄的特效作品保存到系统照片。";
