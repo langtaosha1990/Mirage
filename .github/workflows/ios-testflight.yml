@@ -3,6 +3,14 @@ name: iOS TestFlight
 on:
   workflow_dispatch:
     inputs:
+      build_configuration:
+        description: Xcode build configuration
+        type: choice
+        required: true
+        default: Release
+        options:
+          - Debug
+          - Release
       distribution:
         description: Distribution method
         type: choice
@@ -59,9 +67,10 @@ jobs:
           cp "$RUNNER_TEMP/mirage.mobileprovision" "$profile_dir/$uuid.mobileprovision"
           echo "profile_uuid=$uuid" >> "$GITHUB_OUTPUT"
 
-      - name: Archive and export Release IPA
+      - name: Archive and export IPA
         env:
           DISTRIBUTION: ${{ inputs.distribution }}
+          BUILD_CONFIGURATION: ${{ inputs.build_configuration }}
           PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
         run: |
           set -euo pipefail
@@ -70,7 +79,7 @@ jobs:
             method=release-testing
           fi
           build_number=$((10000 + GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
-          xcodebuild -project Mirage.xcodeproj -scheme Mirage -configuration Release \
+          xcodebuild -project Mirage.xcodeproj -scheme Mirage -configuration "$BUILD_CONFIGURATION" \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Mirage.xcarchive" \
             CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=SX7EYW9LC7 \
             CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
@@ -97,7 +106,7 @@ jobs:
         if: inputs.distribution == 'ad-hoc'
         uses: actions/upload-artifact@v4
         with:
-          name: Mirage-Ad-Hoc
+          name: Mirage-${{ inputs.build_configuration }}-Ad-Hoc
           path: ${{ runner.temp }}/export/*.ipa
           if-no-files-found: error
 
